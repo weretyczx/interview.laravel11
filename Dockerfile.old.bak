@@ -1,0 +1,121 @@
+# ==========================================
+# 1. 全域變數定義區
+# ==========================================
+ARG PHP_VERSION=8.2.30
+ARG ALPINE_VERSION=3.22
+ARG COMPOSER_VERSION=2.9.7
+ARG PHPREDIS_VERSION=6.3.0
+
+# ==========================================
+# 1.1 Composer binary alias (之後拿裡面 composer 安裝)
+# ==========================================
+FROM composer:${COMPOSER_VERSION} AS composer-bin
+
+# ==========================================
+# 2. Base Stage (PHP runtime + extension)
+# ==========================================
+FROM php:${PHP_VERSION}-alpine${ALPINE_VERSION} AS base
+
+ARG TIME_ZONE=Asia/Taipei
+ARG PHPREDIS_VERSION
+ENV TZ=${TIME_ZONE}
+
+WORKDIR /app
+
+RUN apk --no-cache add \
+    # icu-libs 不可移除會爆開
+    libzip icu-libs icu-data-full gmp tzdata \
+    libpng libavif libjpeg-turbo libwebp freetype && \
+    apk add --no-cache --virtual .build-deps \
+    g++ make autoconf icu-dev gmp-dev zlib-dev libzip-dev \
+    libpng-dev libwebp-dev libjpeg-turbo-dev freetype-dev libavif-dev && \
+    docker-php-ext-configure gd --with-freetype --with-jpeg --with-webp --with-avif && \
+    docker-php-ext-install -j$(nproc) gd pdo_mysql intl opcache zip gmp bcmath pcntl && \
+    pecl install redis-${PHPREDIS_VERSION} && \
+    docker-php-ext-enable redis && \
+    ln -sf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone && \
+    apk del .build-deps && \
+    rm -rf /tmp/* /var/cache/apk/* && \
+    # 啟用 production php.ini
+    mv "$PHP_INI_DIR/php.ini-production" "$PHP_INI_DIR/php.ini"
+
+# 如果需要覆蓋 ini or conf 檔名優先權 999 放最後讀
+# env 設置變數 default 之後 SRE 可以用 env 變數覆蓋更改設定
+# ex: ENV FPM_MAX_CHILDREN=32
+# COPY php.ini $PHP_INI_DIR/conf.d/999-custom.ini
+# COPY php-fpm.conf /usr/local/etc/php-fpm.d/www.conf
+
+# ==========================================
+# 3. Vendor Stage (含 dev，給 testing 用)
+# ==========================================
+FROM base AS vendor-test
+ARG COMPOSER_VERSION
+
+COPY --from=composer-bin /usr/bin/composer /usr/bin/composer
+
+# 先裝套件（不含 autoload / scripts），最大化 layer cache
+COPY composer.json composer.lock ./
+RUN composer install \
+    --no-interaction \
+    --no-scripts \
+    --no-autoloader \
+    #下載壓縮 zip 比較快
+    --prefer-dist
+
+# ==========================================
+# 4. Vendor-Prod Stage (--no-dev，給 production 用)
+# ==========================================
+FROM base AS vendor-prod
+ARG COMPOSER_VERSION
+
+COPY --from=composer-bin /usr/bin/composer /usr/bin/composer
+
+COPY composer.json composer.lock ./
+RUN composer install \
+    --no-dev \
+    --no-interaction \
+    --no-scripts \
+    --no-autoloader \
+    --prefer-dist
+
+# ==========================================
+# 5. Testing Stage
+# ==========================================
+FROM base AS testing
+ARG COMPOSER_VERSION
+
+COPY --from=composer-bin /usr/bin/composer /usr/bin/composer
+COPY --from=vendor-test /app/vendor ./vendor
+COPY . .
+
+RUN composer dump-autoload --optimize --no-scripts
+
+CMD ["vendor/bin/phpunit"]
+
+# ==========================================
+# 6. Production Stage
+# ==========================================
+FROM base AS production
+ARG COMPOSER_VERSION
+
+COPY --from=composer-bin /usr/bin/composer /usr/bin/composer
+COPY --from=vendor-prod /app/vendor ./vendor
+COPY --chown=www-data:www-data . .
+
+RUN composer dump-autoload --optimize --no-dev --no-scripts && \
+    # 確保 storage 資料夾存在
+    mkdir -p storage/framework/cache/data \
+    storage/framework/sessions \
+    storage/framework/views \
+    storage/logs \
+    bootstrap/cache && \
+    chown -R www-data:www-data /app/storage /app/bootstrap/cache
+
+USER www-data
+
+EXPOSE 9000
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+    CMD php -v >/dev/null 2>&1 || exit 1
+
+CMD ["php-fpm"]

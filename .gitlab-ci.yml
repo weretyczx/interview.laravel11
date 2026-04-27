@@ -1,0 +1,131 @@
+stages:
+  - install
+  - test
+  - build
+  - deploy
+
+variables:
+  DOCKER_HOST: tcp://docker:2375
+  DOCKER_TLS_CERTDIR: ""
+  DOCKER_DRIVER: overlay2
+  DOCKER_BUILDKIT: "1"
+
+  TEST_IMAGE: $CI_REGISTRY_IMAGE:test-$CI_COMMIT_SHORT_SHA
+  TEST_LATEST: $CI_REGISTRY_IMAGE:test-latest
+  TEST_CACHE: $CI_REGISTRY_IMAGE:test-buildcache
+
+  PROD_IMAGE: $CI_REGISTRY_IMAGE:prod-$CI_COMMIT_SHORT_SHA
+  PROD_LATEST: $CI_REGISTRY_IMAGE:prod-latest
+  PROD_CACHE: $CI_REGISTRY_IMAGE:prod-buildcache
+
+# ------------------------------------------------------------------
+# Stage 1: 建立 testing image (含 install + dev deps)
+# ------------------------------------------------------------------
+install:testing:
+  stage: install
+  image: docker:27
+  services:
+    - docker:27-dind
+  before_script:
+    - echo "$CI_GITLAB_TOKEN" | docker login -u "$CI_REGISTRY_USER" --password-stdin "$CI_REGISTRY"
+    - docker buildx create --use --driver docker-container --name gcl-builder >/dev/null 2>&1 || docker buildx use gcl-builder
+  script:
+    - docker buildx build
+        --target testing
+        --cache-from type=registry,ref=$TEST_CACHE
+        --cache-to   type=registry,ref=$TEST_CACHE,mode=max
+        --tag $TEST_IMAGE
+        --tag $TEST_LATEST
+        --push
+        .
+
+# ------------------------------------------------------------------
+# Stage 2: phpunit (mysql 8.0.46-debian)
+# ------------------------------------------------------------------
+test:phpunit:
+  stage: test
+  image: $TEST_IMAGE
+  services:
+    - name: mysql:8.0.46-debian
+      alias: mysql
+      command: ["--default-authentication-plugin=mysql_native_password"]
+  variables:
+    MYSQL_ROOT_PASSWORD: root
+    MYSQL_DATABASE: testing
+    DB_CONNECTION: mysql
+    DB_HOST: mysql
+    DB_PORT: "3306"
+    DB_DATABASE: testing
+    DB_USERNAME: root
+    DB_PASSWORD: root
+    APP_ENV: testing
+    APP_KEY: base64:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+  before_script:
+    - cd /app
+    # 等 mysql 好
+    - until php -r "new PDO('mysql:host=mysql;port=3306', 'root', 'root');" 2>/dev/null; do echo "waiting for mysql..."; sleep 1; done
+  script:
+    - php artisan migrate --force
+    - vendor/bin/phpunit --colors=never
+
+# ------------------------------------------------------------------
+# Stage 3: 建立 production image (僅 main / tag)
+# ------------------------------------------------------------------
+build:production:
+  stage: build
+  image: docker:27
+  services:
+    - docker:27-dind
+  before_script:
+    - echo "$CI_GITLAB_TOKEN" | docker login -u "$CI_REGISTRY_USER" --password-stdin "$CI_REGISTRY"
+    - docker buildx create --use --driver docker-container --name gcl-builder >/dev/null 2>&1 || docker buildx use gcl-builder
+  script:
+    - docker buildx build
+        --target production
+        --cache-from type=registry,ref=$PROD_CACHE
+        --cache-from type=registry,ref=$TEST_CACHE
+        --cache-to   type=registry,ref=$PROD_CACHE,mode=max
+        --tag $PROD_IMAGE
+        --tag $PROD_LATEST
+        --push
+        .
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+    - if: $CI_COMMIT_TAG
+
+# ------------------------------------------------------------------
+# Stage 4: 部署 (SSH)
+# ------------------------------------------------------------------
+deploy:production:
+  stage: deploy
+  # openssh-client
+  image: weretyczx/deployer:alpine-3.22.2
+  extends: .ssh-setup
+  script:
+    - echo "ssh user@server run docker"
+    - echo "Deploy $PROD_IMAGE to production"
+  environment:
+    name: production
+  rules:
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+      when: manual
+    - if: '$CI_COMMIT_TAG'
+      when: manual
+
+
+#####################################################
+# [extends] SSH Setup
+#####################################################
+.ssh-setup:
+  before_script:
+    - eval $(ssh-agent -s)
+    - echo "$SSH_PRIVATE_KEY" | tr -d '\r' | ssh-add - 2>/dev/null
+    - mkdir -p ~/.ssh
+    - |
+      # 只在 .ssh/config 不存在時才創建（保護本地配置）
+      if [ ! -f ~/.ssh/config ]; then
+        printf "Host *\n\tStrictHostKeyChecking no\n\tUserKnownHostsFile=/dev/null\n" > ~/.ssh/config
+        echo "✅ Created ~/.ssh/config with CI defaults"
+      else
+        echo "ℹ️  Using existing ~/.ssh/config (local environment)"
+      fi

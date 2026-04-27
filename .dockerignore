@@ -1,0 +1,36 @@
+# 版本控制
+.git
+.gitignore
+.gitattributes
+
+# Laravel 環境
+.env
+.env.*
+!.env.example
+.phpunit.result.cache
+
+# 依賴目錄 (容器內重裝)
+node_modules
+vendor
+
+# Docker
+.gitlab-ci.yml
+docker-compose*.yml
+cicd.sh
+
+# 文件
+*.md
+
+# Laravel 運行快取與紀錄
+storage/framework/cache/data/*
+storage/framework/sessions/*
+storage/framework/views/*
+storage/logs/*
+
+# IDE
+.idea
+.vscode
+
+# cicd
+.gitlab-ci-local
+*.sh
