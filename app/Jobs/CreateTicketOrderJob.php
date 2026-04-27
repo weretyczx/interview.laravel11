@@ -25,6 +25,8 @@ class CreateTicketOrderJob implements ShouldQueue
 
     private int $qty;
 
+    public int $tries = 3;
+
     /**
      * Create a new job instance.
      */
@@ -48,14 +50,20 @@ class CreateTicketOrderJob implements ShouldQueue
         $orderLockKey = Order::lockKey('CREATE', $this->orderNo);
 
         try {
-            // 已存在 order 不處理 (冪等性)
-            $exists = Order::where('no', $this->orderNo)->exists();
-            if ($exists) {
+            // 已存在 order (冪等性)
+            $order = Order::where('no', $this->orderNo)->first();
+            if ($order) {
+                // 訂單在了直接對帳就好
+                if ($order->status === Order::STATUS['QUEUE']) {
+                    ReconcileOrderJob::dispatch($order->no)->delay(5);
+                }
+
                 return;
             }
 
             // 避免 order 被多個 worker 執行鎖住保護
-            Cache::lock($orderLockKey, 8)->get(function () {
+            Cache::lock($orderLockKey, 9)->get(function () {
+                // 這邊可以在優化 cache 起來就不用查詢
                 $ticket = Ticket::findOrFail($this->ticketId);
 
                 $cost = $ticket->price * $this->qty;
@@ -75,10 +83,14 @@ class CreateTicketOrderJob implements ShouldQueue
 
                 try {
                     // call payment service
+                    // note: 如果當下不會給完成狀態 應該會有 callback
+                    // 要多寫 一個 api hook 給 payment 服務打 callback + 驗證在更新訂單
+                    // 當前是 demo code 保持簡單 打完就成功或失敗就好
                     $response = App::make(FakePay::class)->pay($this->orderNo, $cost);
                 } catch (Throwable $e) {
                     $message = '[CreateTicketOrderJob] FakePay '.$e->getMessage();
                     Log::error($message);
+
                     // 通知 SRE 支付 api 有異狀
                     // Log::channel('telegram')->error($message);
                     // 有問題 事後對帳

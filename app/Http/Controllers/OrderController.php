@@ -17,6 +17,14 @@ class OrderController extends Controller
         // 用 cache 庫存快速扣減檢查庫存
         $stockKey = Ticket::cacheKey('STOCK', $request->ticket_id);
 
+        // 用於快速檢測 如果有人亂搞傳入 $request->ticket_id = 9999999 快速驗證失敗
+        if (! Cache::has($stockKey)) {
+            return response()->json([
+                'message' => 'Ticket not available',
+                'errors' => [],
+            ], 404);
+        }
+
         $remainingStock = Cache::decrement($stockKey, $request->qty);
 
         if ($remainingStock < 0) {

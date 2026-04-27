@@ -10,16 +10,22 @@ trait HasOrderLog
     {
         static::saved(function ($model) {
             // 紀錄 log
-            OrderLog::create([
-                'no' => $model->no,
-                'order_id' => $model->id,
-                'status' => $model->status,
-                'user_id' => $model->user_id,
-                'ticket_id' => $model->ticket_id,
-                'qty' => $model->qty,
-                'cost' => $model->cost,
-                'action_by' => $model->last_action_by,
-            ]);
+            $model->logOrder();
+
         });
+    }
+
+    public function logOrder(array $extra = [])
+    {
+        OrderLog::create(array_merge([
+            'no' => $this->no,
+            'order_id' => $this->id,
+            'status' => $this->status,
+            'user_id' => $this->user_id,
+            'ticket_id' => $this->ticket_id,
+            'qty' => $this->qty,
+            'cost' => $this->cost,
+            'action_by' => $this->last_action_by,
+        ], $extra));
     }
 }

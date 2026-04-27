@@ -46,13 +46,12 @@ class ReconcileOrder extends Command
                         $message = "[order:reconcile] {$order->no} 對帳失敗需人工處裡";
                         Log::error($message);
 
-                        // 通知人工處裡
-                        // Log::channel('telegram')->error($message);
-
                         DB::transaction(function () use ($order) {
                             // 人工處理
                             $order->toComplete(Order::STATUS['MANUAL'], ReconcileOrder::class);
                         });
+                        // 通知人工處裡
+                        // Log::channel('telegram')->error($message);
 
                         Log::error('[order:reconcile] err message '.$e->getMessage());
                         Log::error('[order:reconcile] err trace '.$e->getTraceAsString());

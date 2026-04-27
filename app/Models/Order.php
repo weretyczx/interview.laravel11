@@ -41,20 +41,34 @@ class Order extends Model
      */
     public function toComplete(int $status, string $actionBy): void
     {
-        // 訂單完成
-        $this->update([
+        // 訂單完成 status 必須
+        $updatedOrder = Order::where('id', $this->id)
+            ->where('status', self::STATUS['QUEUE'])
+            ->update([
+                'status' => $status,
+                'last_action_by' => $actionBy,
+            ]);
+
+        // 魯棒性 前面有 where 狀態 status QUEUE 才update
+        // 用狀態機避免有其他 worker 執行導致後續重複扣庫存
+        if ($updatedOrder === 0) {
+            return;
+        }
+
+        // 用 query builder 的 update() 不會過 static::saved 要手動 call create log
+        $this->logOrder([
             'status' => $status,
-            'last_action_by' => $actionBy,
+            'action_by' => $actionBy,
         ]);
 
         // 扣減庫存
         if ($status === Order::STATUS['SUCCESS']) {
-            $affected = Ticket::where('id', $this->ticket_id)
+            $updateTicket = Ticket::where('id', $this->ticket_id)
                 ->where('stock_qty', '>=', $this->qty)
                 ->decrement('stock_qty', $this->qty);
 
             // 如果沒有異動到 扣減失敗要錯誤
-            if ($affected === 0) {
+            if ($updateTicket === 0) {
                 throw new Exception(
                     "[Order::toComplete] DB stock insufficient ticket_id={$this->ticket_id} qty={$this->qty} order_no={$this->no}"
                 );

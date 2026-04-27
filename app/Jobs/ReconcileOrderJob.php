@@ -57,7 +57,7 @@ class ReconcileOrderJob implements ShouldQueue
         $reconcileKey = Order::lockKey('RECONCILE', $order->no);
 
         // 預防其他 worker 消費
-        Cache::lock($reconcileKey, 8)->get(function () use ($order) {
+        Cache::lock($reconcileKey, 9)->get(function () use ($order) {
             try {
                 $info = App::make(FakePay::class)->orderInfo($order->no);
                 $response = json_decode($info);
@@ -82,6 +82,7 @@ class ReconcileOrderJob implements ShouldQueue
     {
         Log::error("[ReconcileOrderJob::failed] {$this->orderNo} 對帳 Job 失敗，等待 order:reconcile 排程做最後處理 err {$e->getMessage()}");
         Log::error('[ReconcileOrderJob] err trace '.$e->getTraceAsString());
+        // 看要不要這邊就通知 SRE 了
     }
 
     public function backoff(): array
