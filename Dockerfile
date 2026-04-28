@@ -24,7 +24,7 @@ FROM mlocati/php-extension-installer:${PHP_IPE_VERSION} AS ipe-bin
 # 2. Base Stage (PHP runtime + extensions via IPE 用大神改好的直接裝比較快)
 #    https://github.com/mlocati/docker-php-extension-installer
 # ==========================================
-FROM php:${PHP_VERSION}-alpine${ALPINE_VERSION} AS base
+FROM php:${PHP_VERSION}-fpm-alpine${ALPINE_VERSION} AS base
 
 ARG TIME_ZONE
 ARG PHPREDIS_VERSION
