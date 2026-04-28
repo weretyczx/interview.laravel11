@@ -50,4 +50,49 @@
 | `App\Jobs\ReconcileOrderJob` | Job | 單筆訂單異常後的自動補償對帳 |
 | `App\Console\Commands\ReconcileOrder` | Command | 全局排程掃描，確保資料最終一致性 |
 
+## 🐳 docker 跑起服務
+```
+docker run -d \
+  --name php-micro \
+  --network docker_backend \
+  -e APP_KEY=base64:oUraOgCdzhEwAvYLtxv/qB77pf7i9vqON8f0ShcphDw= \
+  -e DB_HOST=mysql \
+  registry.gitlab.com/weretyczx/interview.laravel11:prod-latest
+```
+
+### nginx.conf
+```
+server {
+     listen 80;
+     server_name api.micro.dd;
+
+     root  /app/public;
+     index.php index;
+
+     location / {
+         try_files $uri $uri/ /index.php?$query_string;
+     }
+
+     location ~ \.php$ {
+         fastcgi_pass               php-micro:9000;
+         fastcgi_index              index.php;
+         fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
+         include                    fastcgi_params;
+
+         fastcgi_connect_timeout 300;
+         fastcgi_read_timeout    300;
+         fastcgi_send_timeout    300;
+         fastcgi_buffers      16 16k;
+         fastcgi_buffer_size     32k;
+     }
+
+     access_log off;
+     error_log  /var/log/nginx/err.log;
+ }
+ ```
+ 測試 api ping
+ ```
+    curl http://api.micro.dd/api/ping
+    "pong"%
+ ```
 ---
