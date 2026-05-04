@@ -14,7 +14,7 @@ FROM composer:${COMPOSER_VERSION} AS composer-bin
 # ==========================================
 # 2. Base Stage (PHP runtime + extension)
 # ==========================================
-FROM php:${PHP_VERSION}-alpine${ALPINE_VERSION} AS base
+FROM php:${PHP_VERSION}-fpm-alpine${ALPINE_VERSION} AS base
 
 ARG TIME_ZONE=Asia/Taipei
 ARG PHPREDIS_VERSION
